@@ -13,7 +13,7 @@ name: Scrape
 
 on:
   schedule:
-    - cron: '0 08 * * *'   # 13:00 BRT (16:00 UTC) — set by deploy.py
+    - cron: '0 11 * * *'   # 13:00 BRT (16:00 UTC) — set by deploy.py
   workflow_dispatch:
     inputs:
       limit:
