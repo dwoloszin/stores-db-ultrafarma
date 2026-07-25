@@ -41,6 +41,30 @@ import psycopg2.extras
 
 sys.stdout.reconfigure(line_buffering=True)
 
+# Sentinel "price not available" placeholder some source APIs return
+# (e.g. drogariasaopaulo lists reg=9999876.00 with the real price in promo_price).
+# Treated as missing so it never counts as a real regular_price.
+PRICE_SENTINEL = 9_999_000
+
+
+def effective_price_sql(reg: str, promo: str) -> str:
+    """
+    Single source of truth for a row's *effective* price in SQL.
+
+    Uses promo_price whenever it's a real, lower price than regular_price
+    (with no dependency on the unreliable is_discounted flag); otherwise
+    falls back to regular_price. A regular_price at/above the sentinel is
+    treated as missing so the promo wins.
+    """
+    return (
+        f"CASE "
+        f"WHEN {promo} IS NOT NULL AND {promo} > 0 "
+        f"AND ({reg} IS NULL OR {reg} >= {PRICE_SENTINEL} OR {promo} < {reg}) "
+        f"THEN {promo} "
+        f"ELSE {reg} "
+        f"END"
+    )
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Unified DDL
@@ -475,22 +499,24 @@ class StoreDB:
         date_recorded = scraped_at formatted as M/D/YYYY HH:MM
         Only rows with a non-empty EAN are included.
         """
-        sql = """
+        eff_offer = effective_price_sql("o.regular_price", "o.promo_price")
+        eff_hist = effective_price_sql("regular_price", "promo_price")
+        sql = f"""
             SELECT
                 o.ean                                                AS barcode,
-                COALESCE(o.promo_price, o.regular_price)             AS price,
+                {eff_offer}                                          AS price,
                 o.store_id                                           AS store_name,
                 o.scraped_at                                         AS date_recorded,
-                COALESCE(ph.min_price, o.regular_price)              AS hist_min,
-                COALESCE(ph.max_price, o.regular_price)              AS hist_max,
+                COALESCE(ph.min_price, {eff_offer})                  AS hist_min,
+                COALESCE(ph.max_price, {eff_offer})                  AS hist_max,
                 o.product_url,
                 o.image_url,
                 o.product_name
             FROM offers o
             LEFT JOIN (
                 SELECT product_id,
-                       MIN(COALESCE(promo_price, regular_price)) AS min_price,
-                       MAX(regular_price)                        AS max_price
+                       MIN({eff_hist}) AS min_price,
+                       MAX({eff_hist}) AS max_price
                 FROM price_history
                 GROUP BY product_id
             ) ph ON o.product_id = ph.product_id
@@ -617,6 +643,51 @@ class FarmacondeDB(StoreDB):
     DB_ENV_KEY = "DATABASE_URL_FARMACONDE"
 
 
+class EualiriaDB(StoreDB):
+    STORE_ID   = "eualiria"
+    DB_ENV_KEY = "DATABASE_URL_EUALIRIA"
+
+
+class AgillemedDB(StoreDB):
+    STORE_ID   = "agillemed"
+    DB_ENV_KEY = "DATABASE_URL_AGILLEMED"
+
+
+class NovamedDB(StoreDB):
+    STORE_ID   = "novamed"
+    DB_ENV_KEY = "DATABASE_URL_NOVAMED"
+
+
+class PharmedDB(StoreDB):
+    STORE_ID   = "pharmed"
+    DB_ENV_KEY = "DATABASE_URL_PHARMED"
+
+
+class JustMedicamentosDB(StoreDB):
+    STORE_ID   = "justmedicamentos"
+    DB_ENV_KEY = "DATABASE_URL_JUSTMEDICAMENTOS"
+
+
+class GhfarmaDB(StoreDB):
+    STORE_ID   = "ghfarma"
+    DB_ENV_KEY = "DATABASE_URL_GHFARMA"
+
+
+class LevittaDB(StoreDB):
+    STORE_ID   = "levitta"
+    DB_ENV_KEY = "DATABASE_URL_LEVITTA"
+
+
+class DinamicaDB(StoreDB):
+    STORE_ID   = "dinamica"
+    DB_ENV_KEY = "DATABASE_URL_DINAMICA"
+
+
+class FacilitaDB(StoreDB):
+    STORE_ID   = "facilita"
+    DB_ENV_KEY = "DATABASE_URL_FACILITA"
+
+
 # Registry used by the CLI
 STORE_REGISTRY: Dict[str, type] = {
     "drogaleste":       DrogalesteDB,
@@ -629,6 +700,15 @@ STORE_REGISTRY: Dict[str, type] = {
     "panvel":           PanvelDB,
     "farmaciasapp":     FarmaciasAppDB,
     "farmaconde":       FarmacondeDB,
+    "eualiria":         EualiriaDB,
+    "agillemed":        AgillemedDB,
+    "novamed":          NovamedDB,
+    "pharmed":          PharmedDB,
+    "justmedicamentos": JustMedicamentosDB,
+    "ghfarma":          GhfarmaDB,
+    "levitta":          LevittaDB,
+    "dinamica":         DinamicaDB,
+    "facilita":         FacilitaDB,
 }
 
 
